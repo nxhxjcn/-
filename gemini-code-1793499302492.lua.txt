@@ -4,13 +4,6 @@
 getupvalues = getupvalues or debug.getupvalues
 setupvalue = setupvalue or debug.setupvalue
 
-if not (getrawmetatable and getupvalues and setupvalue and (getreg or debug.getregistry)) then
-	local h = Instance.new("Hint", workspace)
-	h.Text = "Incompatible exploit."
-	wait(3)
-	h:Destroy()
-	return
-end
 
 local settings = {
 	refill_at = 0,
