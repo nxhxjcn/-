@@ -1,0 +1,671 @@
+-- Universal Pizza Factory Farm Script (Cooking & Supplying Only)
+-- Enhanced for stealth, safety, and cross-game compatibility
+
+-- Environment & Exploit Checks
+local success, err = pcall(function()
+	return getrawmetatable and getupvalues and setupvalue and (getreg or debug.getregistry)
+end)
+
+if not success or not (getrawmetatable and getupvalues and setupvalue) then
+	local h = Instance.new("Hint", workspace)
+	h.Text = "Incompatible exploit environment."
+	task.spawn(function()
+		task.wait(3)
+		pcall(function() h:Destroy() end)
+	end)
+	return
+end
+
+-- Disable error connections for stealth / anti-detection
+pcall(function()
+	if getconnections then
+		for _, c in next, getconnections(game:GetService("ScriptContext").Error) do
+			c:Disable()
+		end
+	end
+end)
+
+local player = game:GetService("Players").LocalPlayer
+local RNG = Random.new()
+local network
+local getupvalues = getupvalues or debug.getupvalues
+local setupvalue = setupvalue or debug.setupvalue
+
+-- Network finding with fallback / graceful handling for universal execution
+pcall(function()
+	local reg = (getreg or debug.getregistry)()
+	for i = 1, #reg do
+		local f = reg[i]
+		if type(f) == "function" then
+			pcall(function()
+				for k, v in next, getupvalues(f) do
+					if typeof(v) == "Instance" then
+						if v.Name == "CashOut" then
+							setupvalue(f, k, {MouseButton1Click = {wait = function() end, Wait = function() end}})
+						elseif v.Name == "StickerName" then
+							setupvalue(f, k, nil)
+						end
+					end
+				end
+			end)
+		elseif type(f) == "table" and rawget(f, "FireServer") and rawget(f, "BindEvents") then
+			network = f
+		end
+	end
+end)
+
+-- Target game detection (allows running in any game without crashing if elements are missing)
+local isTargetGame = workspace:FindFirstChild("Ovens") and workspace:FindFirstChild("AllDough") and workspace:FindFirstChild("SupplyButtons")
+
+-- Settings
+local settings = {
+	refill_at = 0,
+	refill_end = 60,
+	auto_optimize = true
+}
+
+local doCook = true
+local doSupplier = true
+
+-- GUI Creation Helper
+local function Create(class, parent, props)
+	local new = Instance.new(class)
+	for k, v in next, props do
+		new[k] = v
+	end
+	new.Parent = parent
+	return new
+end
+
+-- Revised Simple GUI with 2 Buttons
+local gui = Create("ScreenGui", game.CoreGui, {Name = "PizzaFarmLite", ZIndexBehavior = "Sibling", ResetOnSpawn = false})
+local main = Create("Frame", gui, {Name = "main", Draggable = true, Active = true, Size = UDim2.new(0, 260, 0, 160), Position = UDim2.new(0.4, 0, 0.2, 0), BackgroundColor3 = Color3.fromRGB(25, 25, 25), BorderColor3 = Color3.fromRGB(50, 50, 50)})
+
+local topbar = Create("Frame", main, {Name = "topbar", Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = Color3.fromRGB(40, 40, 40)})
+Create("TextLabel", topbar, {Size = UDim2.new(1, -30, 1, 0), Position = UDim2.new(0, 10, 0, 0), Text = "Pizza Farm - Lite (Cook & Supply)", TextSize = 13, Font = Enum.Font.GothamSemibold, TextColor3 = Color3.fromRGB(255, 255, 255), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left})
+
+local closeBtn = Create("TextButton", topbar, {Name = "closeBtn", Size = UDim2.new(0, 30, 1, 0), Position = UDim2.new(1, -30, 0, 0), Text = "X", TextSize = 14, Font = Enum.Font.GothamBold, TextColor3 = Color3.fromRGB(255, 255, 255), BackgroundTransparency = 1})
+closeBtn.MouseButton1Click:Connect(function()
+	gui:Destroy()
+	doCook = false
+	doSupplier = false
+end)
+
+local contentFrame = Create("Frame", main, {Size = UDim2.new(1, -20, 1, -45), Position = UDim2.new(0, 10, 0, 38), BackgroundTransparency = 1})
+Create("UIListLayout", contentFrame, {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8), HorizontalAlignment = Enum.HorizontalAlignment.Center})
+
+-- Button 1: Cook Toggle
+local cookBtn = Create("TextButton", contentFrame, {Name = "cookBtn", LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 35), BackgroundColor3 = Color3.fromRGB(46, 204, 113), Text = "Cook: ON", TextSize = 13, Font = Enum.Font.GothamBold, TextColor3 = Color3.fromRGB(255, 255, 255)})
+cookBtn.MouseButton1Click:Connect(function()
+	doCook = not doCook
+	cookBtn.BackgroundColor3 = doCook and Color3.fromRGB(46, 204, 113) or Color3.fromRGB(192, 57, 43)
+	cookBtn.Text = doCook and "Cook: ON" or "Cook: OFF"
+end)
+
+-- Button 2: Supplier Toggle
+local supplierBtn = Create("TextButton", contentFrame, {Name = "supplierBtn", LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 35), BackgroundColor3 = Color3.fromRGB(46, 204, 113), Text = "Supplier: ON", TextSize = 13, Font = Enum.Font.GothamBold, TextColor3 = Color3.fromRGB(255, 255, 255)})
+supplierBtn.MouseButton1Click:Connect(function()
+	doSupplier = not doSupplier
+	supplierBtn.BackgroundColor3 = doSupplier and Color3.fromRGB(46, 204, 113) or Color3.fromRGB(192, 57, 43)
+	supplierBtn.Text = doSupplier and "Supplier: ON" or "Supplier: OFF"
+end)
+
+local statusLbl = Create("TextLabel", contentFrame, {Name = "statusLbl", LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 25), BackgroundTransparency = 1, Text = isTargetGame and "Status: Running" | "Status: Universal Mode (Idle)" , TextSize = 11, Font = Enum.Font.Code, TextColor3 = Color3.fromRGB(150, 200, 150)})
+
+-- Character setup
+local character, root, humanoid
+local function onCharacterAdded(char)
+	if not char then return end
+	character = char
+	root = character:WaitForChild("HumanoidRootPart", 5)
+	humanoid = character:WaitForChild("Humanoid", 5)
+	if humanoid then
+		pcall(function()
+			humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+		end)
+	end
+end
+onCharacterAdded(player.Character or player.CharacterAdded:Wait())
+player.CharacterAdded:Connect(onCharacterAdded)
+
+local lastTeleportTime = 0
+local teleportCooldown = 0.03
+
+local function instantTP(cf)
+	if not root then return end
+	pcall(function()
+		root.CFrame = cf
+		root.Velocity = Vector3.new()
+		root.RotVelocity = Vector3.new()
+		if humanoid then
+			humanoid.Sit = false
+		end
+	end)
+end
+
+local function smartTP(cf)
+	local currentTime = tick()
+	if currentTime - lastTeleportTime < teleportCooldown then
+		task.wait(teleportCooldown - (currentTime - lastTeleportTime))
+	end
+	instantTP(cf)
+	lastTeleportTime = tick()
+end
+
+-- If not target game or network missing, safely idle without crashing
+if not isTargetGame or not network then
+	statusLbl.Text = "Status: Target game not detected (Safe Mode)"
+	return
+end
+
+-- Supply tracking setup
+local supplyCounts = {TomatoSauce = 99, Cheese = 99, Sausage = 99, Pepperoni = 99, Dough = 99, Box = 99, Dew = 99}
+pcall(function()
+	for name in pairs(supplyCounts) do
+		local counterObj = workspace:FindFirstChild("SupplyCounters")
+		if counterObj then
+			local lbl = counterObj.Model[name == "Dew" and "CounterMountainDew" or "Counter" .. name].a.SG.Counter
+			supplyCounts[name] = tonumber(lbl.Text) or 99
+			lbl.Changed:Connect(function()
+				supplyCounts[name] = tonumber(lbl.Text) or 99
+			end)
+		end
+	end
+end)
+
+-- Cached Workspace References
+local workspaceOrders = workspace:FindFirstChild("Orders")
+local workspaceAllMountainDew = workspace:FindFirstChild("AllMountainDew")
+local workspaceAllDough = workspace:FindFirstChild("AllDough")
+local workspaceOvens = workspace:FindFirstChild("Ovens")
+local workspaceSupplyButtons = workspace:FindFirstChild("SupplyButtons")
+local workspaceAllSupplyBoxes = workspace:FindFirstChild("AllSupplyBoxes")
+
+local orderDict = {["3540529228"] = "Cheese", ["3540530535"] = "Sausage", ["3540529917"] = "Pepperoni", ["2512571151"] = "Dew", ["2512441325"] = "Dew"}
+local cookingDict = {Cheese = 0, Sausage = 0, Pepperoni = 0, Dew = 0}
+local cookPtick = 0
+local cookDtick = 0
+
+local function getOrders()
+	local orders = {}
+	if not workspaceOrders then return orders end
+	local tempCookingDict = {Cheese = cookingDict.Cheese, Sausage = cookingDict.Sausage, Pepperoni = cookingDict.Pepperoni, Dew = cookingDict.Dew}
+	local children = workspaceOrders:GetChildren()
+	for i = 1, #children do
+		local sg = children[i]:FindFirstChild("SG")
+		if sg then
+			local imageLabel = sg:FindFirstChild("ImageLabel")
+			if imageLabel then
+				local o = orderDict[imageLabel.Image:match("%d+$")]
+				if o then
+					if tempCookingDict[o] > 0 then
+						tempCookingDict[o] = tempCookingDict[o] - 1
+					elseif (o == "Dew" and workspaceAllMountainDew and #workspaceAllMountainDew:GetChildren() > 0) or (o ~= "Dew" and supplyCounts[o] > 0 and supplyCounts.TomatoSauce > 0 and supplyCounts.Cheese > 0) then
+						orders[#orders + 1] = o
+					end
+				end
+			end
+		end
+	end
+	return orders
+end
+
+local function FindFirstDew()
+	if not workspaceAllMountainDew then return end
+	local children = workspaceAllMountainDew:GetChildren()
+	for i = 1, #children do
+		local d = children[i]
+		local isBurned = d:FindFirstChild("IsBurned")
+		if (isBurned == nil or isBurned.Value == false) and not d.Anchored then
+			return d
+		end
+	end
+end
+
+local function FindBadDew()
+	if not workspaceAllMountainDew then return end
+	local children = workspaceAllMountainDew:GetChildren()
+	for i = 1, #children do
+		local d = children[i]
+		local isBurned = d:FindFirstChild("IsBurned")
+		if (isBurned == nil or isBurned.Value == false) and d.Position.X > 53 and d.Position.Z > 50 and not d.Anchored then
+			return d
+		end
+	end
+end
+
+local function FindDoughAndWithout(str)
+	if not workspaceAllDough then return end
+	local goodraw, p, raw, trash
+	local children = workspaceAllDough:GetChildren()
+	local childCount = #children
+	
+	for i = childCount, 2, -1 do
+		local j = RNG:NextInteger(1, i)
+		children[j], children[i] = children[i], children[j]
+	end
+	
+	for i = 1, childCount do
+		local d = children[i]
+		if d.Anchored == false and #d:GetChildren() > 9 then
+			local isBurned = d:FindFirstChild("IsBurned")
+			local hasBugs = d:FindFirstChild("HasBugs")
+			local cold = d:FindFirstChild("Cold")
+			local sg = d:FindFirstChild("SG")
+			
+			if isBurned and hasBugs and cold then
+				if isBurned.Value or hasBugs.Value or cold.Value or (d.BrickColor.Name == "Bright orange" and d:FindFirstChild("XBillboard")) then
+					if trash == nil and d.Position.Y > 0 and ((d.Position * Vector3.new(1, 0, 1)) - Vector3.new(47.90, 0, 72.49)).Magnitude > 1 then
+						trash = d
+					end
+				elseif p == nil and d.BrickColor.Name == "Bright orange" then
+					p = d
+				elseif goodraw == nil and d.Position.X < 55 and d.BrickColor.Name == "Brick yellow" then
+					if sg then
+						local frame = sg:FindFirstChild("Frame")
+						if frame then
+							local checkPassed = false
+							if str then
+								checkPassed = not frame:FindFirstChild(str)
+							else
+								checkPassed = frame:FindFirstChild("Sausage") == nil and frame:FindFirstChild("Pepperoni") == nil
+							end
+							
+							if checkPassed then
+								local mesh = d:FindFirstChild("Mesh")
+								if mesh then
+									if mesh.Scale.Y < 1.1 then
+										goodraw = d
+									else
+										raw = d
+									end
+								end
+							end
+						end
+					end
+				end
+				if goodraw and p and trash then
+					return goodraw, p, trash
+				end
+			end
+		end
+	end
+	return goodraw or raw, p, trash
+end
+
+local function getOvenNear(pos)
+	if not workspaceOvens then return end
+	local children = workspaceOvens:GetChildren()
+	for i = 1, #children do
+		local bottom = children[i]:FindFirstChild("Bottom")
+		if bottom and (bottom.Position - pos).magnitude < 1.5 then
+			return children[i]
+		end
+	end
+end
+
+local function getDoughNear(pos)
+	if not workspaceAllDough then return end
+	local children = workspaceAllDough:GetChildren()
+	for i = 1, #children do
+		if (children[i].Position - pos).magnitude < 1.5 then
+			return children[i]
+		end
+	end
+end
+
+local function isFullyOpen(oven)
+	local isOpen = oven:FindFirstChild("IsOpen")
+	if not isOpen or not isOpen.Value then return false end
+	local door = oven:FindFirstChild("Door")
+	if not door then return false end
+	local meter = door:FindFirstChild("Meter")
+	if not meter then return false end
+	local rotVel = meter:FindFirstChild("RotVelocity")
+	if not rotVel then return false end
+	return (rotVel.Z ^ 2) ^ .5 < .0001
+end
+
+local bcolorToSupply = {["Dark orange"] = "Sausage", ["Bright blue"] = "Pepperoni", ["Bright yellow"] = "Cheese", ["Bright red"] = "TomatoSauce", ["Dark green"] = "Dew", ["Brick yellow"] = "Dough", ["Light stone grey"] = "Box", ["Really black"] = "Dew"}
+local supplyButtons = {}
+if workspaceSupplyButtons then
+	local supplyButtonsChildren = workspaceSupplyButtons:GetChildren()
+	for i = 1, #supplyButtonsChildren do
+		local unpressed = supplyButtonsChildren[i]:FindFirstChild("Unpressed")
+		if unpressed then
+			supplyButtons[#supplyButtons + 1] = unpressed
+		end
+	end
+	table.sort(supplyButtons, function(a, b)
+		return a.Position.X < b.Position.X
+	end)
+end
+
+-- Cooking Function
+local function tryCook()
+	if not doCook or not workspaceOvens then return end
+	
+	local iterationCount = 0
+	local maxIterations = 30
+	
+	while doCook and iterationCount < maxIterations do
+	iterationCount = iterationCount + 1
+	
+	local orders = getOrders()
+	if #orders == 0 then break end
+	
+	local order = orders[1]
+	local topping
+	if order == "Pepperoni" or order == "Sausage" then
+		topping = order
+	end
+	
+	local cookD = order == "Dew" and FindFirstDew() or nil
+	local badD = FindBadDew()
+	local raw, cookP, trash
+	
+	if order ~= "Dew" then
+		raw, cookP, trash = FindDoughAndWithout(topping == "Pepperoni" and "Sausage" or (topping == "Sausage" and "Pepperoni" or nil))
+	end
+	
+	local ovens = workspaceOvens:GetChildren()
+	local validOvens = {}
+	for i = 1, #ovens do
+		if #ovens[i]:GetChildren() >= 10 then
+			validOvens[#validOvens + 1] = ovens[i]
+		end
+	end
+	
+	for i = #validOvens, 2, -1 do
+		local j = RNG:NextInteger(1, i)
+		validOvens[j], validOvens[i] = validOvens[i], validOvens[j]
+	end
+	
+	local didsomething = false
+	local currentTick = tick()
+	
+	if cookP and currentTick - cookPtick > 0.4 then
+		local oven = getOvenNear(cookP.Position)
+		if oven == nil or oven.IsOpen.Value then
+			cookPtick = currentTick
+			didsomething = true
+			if (root.Position - Vector3.new(36.64, 3.80, 54.11)).magnitude > 9 then
+				smartTP(CFrame.new(36.64, 3.80, 54.11))
+				task.wait(.03)
+			end
+			network:FireServer("UpdateProperty", cookP, "CFrame", CFrame.new(RNG:NextNumber(56, 57), 4.1, 38))
+		end
+	end
+	
+	if order == "Dew" and cookD and currentTick - cookDtick > 0.4 then
+		cookDtick = currentTick
+		didsomething = true
+		if (root.Position - Vector3.new(36.64, 3.80, 54.11)).magnitude > 9 then
+			smartTP(CFrame.new(36.64, 3.80, 54.11))
+			task.wait(.03)
+		end
+		network:FireServer("UpdateProperty", cookD, "CFrame", CFrame.new(53, 4.68, 36.5))
+	elseif order ~= "Dew" and raw and raw.Parent and supplyCounts[order] > 0 and supplyCounts.TomatoSauce > 0 and supplyCounts.Cheese > 0 then
+		local mesh = raw:FindFirstChild("Mesh")
+		if mesh and mesh.Scale.Y > 1.5 then
+			if (root.Position - Vector3.new(36.64, 3.80, 54.11)).magnitude > 9 then
+				smartTP(CFrame.new(36.64, 3.80, 54.11))
+				task.wait(.03)
+			end
+			didsomething = true
+			network:FireServer("UpdateProperty", raw, "CFrame", CFrame.new(RNG:NextNumber(29.6, 44.6), 3.7, RNG:NextNumber(42.5, 48.5)))
+			task.wait()
+			network:FireServer("SquishDough", raw)
+		else
+			local targetOven
+			for _, o in ipairs(validOvens) do
+				if isFullyOpen(o) then
+					local other = getDoughNear(o.Bottom.Position)
+					if other == nil then
+						targetOven = o
+						break
+					else
+						local otherSG = other:FindFirstChild("SG")
+						if not (other.BrickColor.Name == "Bright orange" and otherSG and otherSG:FindFirstChild("Frame") and otherSG.Frame:FindFirstChild("TomatoSauce") and otherSG.Frame:FindFirstChild("MeltedCheese")) then
+							didsomething = true
+							if (root.Position - Vector3.new(36.64, 3.80, 54.11)).magnitude > 9 then
+								smartTP(CFrame.new(36.64, 3.80, 54.11))
+								task.wait(.03)
+							end
+							network:FireServer("UpdateProperty", other, "CFrame", CFrame.new(RNG:NextNumber(29.6, 44.6), 3.7, RNG:NextNumber(42.5, 48.5)))
+							task.wait()
+							targetOven = o
+							break
+						end
+					end
+				end
+			end
+			
+			if targetOven and raw.Parent == workspaceAllDough then
+				if (root.Position - Vector3.new(36.64, 3.80, 54.11)).magnitude > 9 then
+					smartTP(CFrame.new(36.64, 3.80, 54.11))
+					task.wait(.03)
+				end
+				didsomething = true
+				network:FireServer("AddIngredientToPizza", raw, "TomatoSauce")
+				network:FireServer("AddIngredientToPizza", raw, "Cheese")
+				if topping then
+					network:FireServer("AddIngredientToPizza", raw, topping)
+				end
+				network:FireServer("UpdateProperty", raw, "CFrame", targetOven.Bottom.CFrame + Vector3.new(0, 0.7, 0))
+				targetOven.Door.ClickDetector.Detector:FireServer()
+				
+				cookingDict[order] = cookingDict[order] + 1
+				local revoked = false
+				task.spawn(function()
+					raw.AncestryChanged:Wait()
+					if not revoked then
+						cookingDict[order] = cookingDict[order] - 1
+						revoked = true
+					end
+				end)
+				task.delay(40, function()
+					if not revoked then
+						cookingDict[order] = cookingDict[order] - 1
+						revoked = true
+					end
+				end)
+			end
+		end
+	end
+	
+	if not didsomething then
+		for _, o in ipairs(validOvens) do
+			local isOpen = o:FindFirstChild("IsOpen")
+			local isCooking = o:FindFirstChild("IsCooking")
+			if isOpen and isCooking and isOpen.Value == false then
+				local door = o:FindFirstChild("Door")
+				if door then
+					local meter = door:FindFirstChild("Meter")
+					if meter then
+						local sg = meter:FindFirstChild("SurfaceGui")
+						if sg then
+							local progressBar = sg:FindFirstChild("ProgressBar")
+							if progressBar then
+								local bar = progressBar:FindFirstChild("Bar")
+								if bar then
+									if isCooking.Value == false or (Vector3.new(bar.ImageColor3.r, bar.ImageColor3.g, bar.ImageColor3.b) - Vector3.new(.871, .518, .224)).magnitude > .1 then
+										didsomething = true
+										if (root.Position - Vector3.new(36.64, 3.80, 54.11)).magnitude > 9 then
+											smartTP(CFrame.new(36.64, 3.80, 54.11))
+											task.wait(.03)
+										end
+										door.ClickDetector.Detector:FireServer()
+										break
+									end
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	
+	if badD then
+		didsomething = true
+		if (root.Position - Vector3.new(36.64, 3.80, 54.11)).magnitude > 9 then
+			smartTP(CFrame.new(36.64, 3.80, 54.11))
+			task.wait(.03)
+		end
+		network:FireServer("UpdateProperty", badD, "CFrame", CFrame.new(RNG:NextNumber(28, 30), 1.7, RNG:NextNumber(55, 57)))
+	end
+	
+	if trash then
+		local trashIsBurned = trash:FindFirstChild("IsBurned")
+		if trashIsBurned and (trashIsBurned.Value == false or getOvenNear(trash.Position) == nil or getOvenNear(trash.Position).IsOpen.Value) then
+			didsomething = true
+			if (root.Position - Vector3.new(36.64, 3.80, 54.11)).magnitude > 9 then
+				smartTP(CFrame.new(36.64, 3.80, 54.11))
+				task.wait(.03)
+			end
+			network:FireServer("UpdateProperty", trash, "CFrame", CFrame.new(47.90, 7.00, 72.49, 1, 0, -0, 0, 0, 1, 0, -1, 0))
+		end
+	end
+	
+	if didsomething then
+		task.wait(0.2)
+	else
+		break
+	end
+	end
+end
+
+-- Main Loop (Cooking & Supplying Only)
+task.spawn(function()
+	while gui.Parent do
+		task.wait(0.4)
+		
+		if humanoid then
+			humanoid.Sit = false
+		end
+		
+		-- Anti-AFK
+		if RNG:NextInteger(1, 30) == 1 then
+			pcall(function()
+				game:GetService("VirtualInputManager"):SendKeyEvent(true, "Z", false, game)
+				task.wait()
+				game:GetService("VirtualInputManager"):SendKeyEvent(false, "Z", false, game)
+			end)
+		end
+		
+		-- Run Cooking
+		if doCook then
+			tryCook()
+		end
+		
+		-- Run Supplier
+		if doSupplier and workspaceAllSupplyBoxes then
+			local refill = false
+			for s, c in pairs(supplyCounts) do
+				if c <= settings.refill_at then
+					refill = true
+					break
+				end
+			end
+			
+			if refill then
+				local waiting = false
+				local waitingTick = 0
+				local lastBox
+				
+				while doSupplier do
+					local fulfilled = true
+					local boxes = workspaceAllSupplyBoxes:GetChildren()
+					
+					for yy = 1, 2 do
+						local needtp = true
+						local realc = 0
+						
+						for _, btn in ipairs(supplyButtons) do
+							local s = bcolorToSupply[btn.BrickColor.Name]
+							if s and supplyCounts[s] < settings.refill_end then
+								local count = 0
+								if #boxes > 30 then
+									for i = 1, #boxes do
+										local box = boxes[i]
+										if bcolorToSupply[box.BrickColor.Name] == s and box.Anchored == false and box.Position.Z < -940 then
+											count = count + 1
+										end
+									end
+								end
+								if count < 2 then
+									if needtp then
+										needtp = false
+										smartTP(btn.CFrame + Vector3.new(0, 3, 2.5))
+										task.wait(0.03)
+									end
+									if not doSupplier then break end
+									root.CFrame = btn.CFrame + Vector3.new(0, 3, 0)
+									task.wait(0.03)
+									realc = realc + 1
+								end
+								fulfilled = false
+							end
+						end
+						task.wait(0.12)
+						if yy == 1 and realc < 3 then
+							task.wait(0.3)
+						end
+					end
+					
+					if fulfilled or not doSupplier then
+						break
+					end
+					
+					smartTP(CFrame.new(8, 12.4, -1020))
+					if not doSupplier then break end
+					
+					if waiting and lastBox and (lastBox.Position.X > 42 or tick() - waitingTick > 5) then
+						waiting = false
+						if lastBox.Position.X < 42 then
+							smartTP(CFrame.new(20.5, 8, -35))
+							task.wait(0.08)
+							local stuckBoxes = workspaceAllSupplyBoxes:GetChildren()
+							for i = 1, #stuckBoxes do
+								local box = stuckBoxes[i]
+								if box.Anchored == false and box.Position.Z > -55 then
+									network:FireServer("UpdateProperty", box, "CFrame", CFrame.new(RNG:NextNumber(0, 40), RNG:NextNumber(-10, -30), -70))
+									task.wait()
+								end
+							end
+							task.wait(0.08)
+						end
+					end
+					
+					if not waiting then
+						if root.Position.Z > -900 then
+							smartTP(CFrame.new(8, 12.4, -1020))
+						end
+						task.wait(0.08)
+						lastBox = nil
+						local j = 0
+						local supplyBoxes = workspaceAllSupplyBoxes:GetChildren()
+						for i = 1, #supplyBoxes do
+							local box = supplyBoxes[i]
+							local boxSupply = bcolorToSupply[box.BrickColor.Name]
+							if box.Anchored == false and box.Position.Z < -940 and boxSupply and supplyCounts[boxSupply] < settings.refill_end then
+								box.CFrame = CFrame.new(38 - 4.3 * math.floor(j / 2), 5, -7 - 5 * (j % 2))
+								network:FireServer("UpdateProperty", box, "CFrame", box.CFrame)
+								lastBox = box
+								j = j + 1
+								if j > 13 then break end
+							end
+						end
+						if lastBox then
+							waiting = true
+							waitingTick = tick()
+						end
+					end
+				end
+			end
+		end
+	end
+end)
+
+print("Pizza Farm Lite (Cook & Supply) Loaded Successfully")
